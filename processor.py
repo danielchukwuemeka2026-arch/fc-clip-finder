@@ -39,6 +39,18 @@ CANON = {
 }
 
 
+def get_duration_seconds(video_path: str) -> float:
+    """Return video duration in seconds using ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json", "-show_format",
+        video_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, check=True, text=True)
+    import json
+    data = json.loads(result.stdout)
+    return float(data["format"]["duration"])
+
+
 def extract_frames(video_path: str, out_dir: str, fps: float = 2.0) -> int:
     """Extract frames from video at `fps` frames/sec into out_dir.
     Returns number of frames extracted."""
