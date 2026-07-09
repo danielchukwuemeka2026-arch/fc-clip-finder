@@ -4,7 +4,9 @@ import shutil
 
 import streamlit as st
 
-from processor import extract_frames, build_timeline, build_segments, cut_player_highlights
+from processor import extract_frames, build_timeline, build_segments, cut_player_highlights, get_duration_seconds
+
+MAX_DURATION_SECONDS = 10 * 60  # 10 minute cap
 
 st.set_page_config(page_title="FC Mobile Player Clip Finder", page_icon="⚽")
 
@@ -32,6 +34,15 @@ if uploaded is not None and st.button("Process match"):
         video_path = os.path.join(workdir, "match.mp4")
         with open(video_path, "wb") as f:
             f.write(uploaded.read())
+
+        duration = get_duration_seconds(video_path)
+        if duration > MAX_DURATION_SECONDS:
+            st.error(
+                f"This video is {duration/60:.1f} minutes long. The current limit is "
+                f"10 minutes. Please trim the video or lower its export quality to "
+                f"reduce length/size, then try again."
+            )
+            st.stop()
 
         # Persist video outside the temp dir so we can cut clips from it later
         persistent_video = os.path.join(tempfile.gettempdir(), "fc_tracker_match.mp4")
