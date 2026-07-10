@@ -142,22 +142,79 @@ def player_summary(segments: dict, min_hits: int = 3) -> list[tuple]:
     return [(n, ns, s) for n, ns, s in out]
 
 
-def cut_player_highlights(video_path: str, segments: list[tuple], out_path: str,
-                           padding: float = 1.5) -> str:
-    """Cut and concatenate the given (start,end) segments from video_path
-    into a single highlight file at out_path. Adds `padding` seconds of
-    context before/after each segment."""
+def build_clip_windows(segments: dict, chosen_name: str, pad_after: float = 1.5,
+                        max_lookback: float = 6.0, fallback_pad_before: float = 2.0) -> list[tuple]:
+    """For each of chosen_name's possession segments, compute the actual
+    (clip_start, clip_end) to cut.
+
+    clip_start reaches back to the moment the PREVIOUS player's touch ended
+    (i.e. when the pass was actually played) rather than an arbitrary fixed
+    number of seconds — so the clip shows exactly that one pass in, not the
+    whole prior buildup.
+
+    If no other player's possession is found within `max_lookback` seconds
+    before this segment starts (e.g. it's the kickoff, or detection missed
+    the previous touch), falls back to `fallback_pad_before` seconds of
+    fixed padding so we still get some lead-in.
+    """
+    # Flatten every player's segments into one chronological list.
+    all_segs = []
+    for name, segs in segments.items():
+        for s, e in segs:
+            all_segs.append((s, e, name))
+    all_segs.sort(key=lambda x: x[0])
+
+    chosen_segs = sorted(segments.get(chosen_name, []), key=lambda x: x[0])
+    windows = []
+    for s, e in chosen_segs:
+        # Find the most recent OTHER-player segment that ended at or before
+        # this one starts.
+        prev_end = None
+        for (ps, pe, pname) in all_segs:
+            if pname == chosen_name:
+                continue
+            if pe <= s + 1e-6 and (prev_end is None or pe > prev_end):
+                prev_end = pe
+
+        if prev_end is not None and (s - prev_end) <= max_lookback:
+            # Start just slightly before the previous player's touch ended,
+            # so we catch the kick/pass motion itself rather than starting
+            # a frame after the ball has already left.
+            clip_start = max(0, prev_end - 0.3)
+        else:
+            clip_start = max(0, s - fallback_pad_before)
+
+        clip_end = e + pad_after
+        windows.append((clip_start, clip_end))
+    return windows
+
+
+def cut_single_clip(video_path: str, start: float, end: float, out_path: str) -> str:
+    """Cut one clip from video_path covering the exact [start, end] window
+    (in seconds). Re-encodes (rather than stream-copying) so the clip
+    starts/ends cleanly on exact frame boundaries instead of the nearest
+    keyframe, which is what caused the freezing/skipping you saw with the
+    old -c copy approach."""
+    dur = max(0.1, end - start)
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(start), "-i", video_path,
+        "-t", str(dur),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac",
+        out_path,
+    ]
+    subprocess.run(cmd, capture_output=True, check=True)
+    return out_path
+
+
+def cut_player_highlights(video_path: str, windows: list[tuple], out_path: str) -> str:
+    """Cut and concatenate the given (start,end) windows from video_path
+    into a single highlight file at out_path."""
     with tempfile.TemporaryDirectory() as tmp:
         clip_paths = []
-        for i, (s, e) in enumerate(segments):
-            start = max(0, s - padding)
-            dur = (e - s) + 2 * padding
+        for i, (s, e) in enumerate(windows):
             clip_path = os.path.join(tmp, f"clip_{i:03d}.mp4")
-            cmd = [
-                "ffmpeg", "-y", "-ss", str(start), "-i", video_path,
-                "-t", str(dur), "-c", "copy", clip_path,
-            ]
-            subprocess.run(cmd, capture_output=True, check=True)
+            cut_single_clip(video_path, s, e, clip_path)
             clip_paths.append(clip_path)
 
         concat_list = os.path.join(tmp, "concat.txt")
