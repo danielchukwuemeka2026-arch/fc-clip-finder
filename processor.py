@@ -207,12 +207,14 @@ def cut_single_clip(video_path: str, start: float, end: float, out_path: str) ->
     return out_path
 
 
-def cut_player_highlights(video_path: str, windows: list[tuple], out_path: str) -> str:
-    """Cut and concatenate the given (start,end) windows from video_path
-    into a single highlight file at out_path."""
+def cut_player_highlights(clips: list[tuple], out_path: str) -> str:
+    """Cut and concatenate clips into a single highlight file at out_path.
+    `clips` is a list of (video_path, start, end) tuples — each clip can
+    come from a different source video, which is what makes combining
+    highlights across multiple uploaded matches possible."""
     with tempfile.TemporaryDirectory() as tmp:
         clip_paths = []
-        for i, (s, e) in enumerate(windows):
+        for i, (video_path, s, e) in enumerate(clips):
             clip_path = os.path.join(tmp, f"clip_{i:03d}.mp4")
             cut_single_clip(video_path, s, e, clip_path)
             clip_paths.append(clip_path)
