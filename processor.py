@@ -105,7 +105,7 @@ def build_timeline(frames_dir: str, fps: float, progress_cb=None) -> list[dict]:
     return timeline
 
 
-def build_segments(timeline: list[dict], gap_seconds: float = 2.5) -> dict:
+def build_segments(timeline: list[dict], gap_seconds: float = 4.0) -> dict:
     """Collapse per-name timestamps into contiguous segments.
     Returns {name: [(start, end), ...]} sorted by total frame-hits desc
     is left to the caller; this returns a plain dict."""
