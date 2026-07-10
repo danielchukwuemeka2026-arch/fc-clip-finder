@@ -53,15 +53,19 @@ def get_duration_seconds(video_path: str) -> float:
 
 def extract_frames(video_path: str, out_dir: str, fps: float = 2.0) -> int:
     """Extract frames from video at `fps` frames/sec into out_dir.
-    Returns number of frames extracted."""
+    Uses JPG (not PNG) to keep disk usage manageable on long videos — a
+    30-minute match at 2fps is 3600 frames; PNG would use several GB of
+    disk, JPG keeps it a fraction of that with no meaningful OCR quality
+    loss. Returns number of frames extracted."""
     os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
         "-vf", f"fps={fps}",
-        os.path.join(out_dir, "f_%05d.png"),
+        "-q:v", "5",
+        os.path.join(out_dir, "f_%05d.jpg"),
     ]
     subprocess.run(cmd, capture_output=True, check=True)
-    return len(glob.glob(os.path.join(out_dir, "f_*.png")))
+    return len(glob.glob(os.path.join(out_dir, "f_*.jpg")))
 
 
 def ocr_frame(frame_path: str) -> list[str]:
@@ -91,7 +95,7 @@ def ocr_frame(frame_path: str) -> list[str]:
 def build_timeline(frames_dir: str, fps: float, progress_cb=None) -> list[dict]:
     """Run OCR across all extracted frames, return a list of
     {'t': timestamp_seconds, 'names': [..]} in chronological order."""
-    files = sorted(glob.glob(os.path.join(frames_dir, "f_*.png")))
+    files = sorted(glob.glob(os.path.join(frames_dir, "f_*.jpg")))
     timeline = []
     total = len(files)
     for idx, fpath in enumerate(files):
@@ -142,20 +146,24 @@ def player_summary(segments: dict, min_hits: int = 3) -> list[tuple]:
     return [(n, ns, s) for n, ns, s in out]
 
 
-def build_clip_windows(segments: dict, chosen_name: str, pad_after: float = 1.5,
-                        max_lookback: float = 6.0, fallback_pad_before: float = 2.0) -> list[tuple]:
+def build_clip_windows(segments: dict, chosen_name: str,
+                        max_lookback: float = 6.0, max_lookforward: float = 6.0,
+                        fallback_pad_before: float = 2.0, fallback_pad_after: float = 1.5) -> list[tuple]:
     """For each of chosen_name's possession segments, compute the actual
     (clip_start, clip_end) to cut.
 
     clip_start reaches back to the moment the PREVIOUS player's touch ended
     (i.e. when the pass was actually played) rather than an arbitrary fixed
-    number of seconds — so the clip shows exactly that one pass in, not the
-    whole prior buildup.
+    number of seconds — so the clip shows exactly that one pass in.
 
-    If no other player's possession is found within `max_lookback` seconds
-    before this segment starts (e.g. it's the kickoff, or detection missed
-    the previous touch), falls back to `fallback_pad_before` seconds of
-    fixed padding so we still get some lead-in.
+    clip_end reaches forward to the moment the NEXT player's touch begins
+    (i.e. when this player actually released the ball) rather than a flat
+    number of seconds — so the clip doesn't cut off while this player still
+    has the ball, and doesn't run on needlessly once someone else has it.
+
+    If no neighboring possession is found within the lookback/lookforward
+    windows (e.g. kickoff, stoppage, or a detection miss), falls back to a
+    fixed buffer so there's still some context.
     """
     # Flatten every player's segments into one chronological list.
     all_segs = []
@@ -167,8 +175,8 @@ def build_clip_windows(segments: dict, chosen_name: str, pad_after: float = 1.5,
     chosen_segs = sorted(segments.get(chosen_name, []), key=lambda x: x[0])
     windows = []
     for s, e in chosen_segs:
-        # Find the most recent OTHER-player segment that ended at or before
-        # this one starts.
+        # Look backward: most recent OTHER-player segment that ended at or
+        # before this one starts.
         prev_end = None
         for (ps, pe, pname) in all_segs:
             if pname == chosen_name:
@@ -184,7 +192,22 @@ def build_clip_windows(segments: dict, chosen_name: str, pad_after: float = 1.5,
         else:
             clip_start = max(0, s - fallback_pad_before)
 
-        clip_end = e + pad_after
+        # Look forward: soonest OTHER-player segment that starts at or
+        # after this one ends.
+        next_start = None
+        for (ps, pe, pname) in all_segs:
+            if pname == chosen_name:
+                continue
+            if ps >= e - 1e-6 and (next_start is None or ps < next_start):
+                next_start = ps
+
+        if next_start is not None and (next_start - e) <= max_lookforward:
+            # Extend slightly past when the next player's touch begins, so
+            # the release/reception overlap is fully captured.
+            clip_end = next_start + 0.3
+        else:
+            clip_end = e + fallback_pad_after
+
         windows.append((clip_start, clip_end))
     return windows
 
