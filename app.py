@@ -9,7 +9,7 @@ from processor import (
     cut_player_highlights, cut_single_clip, get_duration_seconds,
 )
 
-MAX_DURATION_SECONDS = 30 * 60  # 30 minute cap, per video
+MAX_DURATION_SECONDS = 4 * 60 * 60  # 4 hours — effectively no real-world cap
 
 st.set_page_config(page_title="FC Mobile Player Clip Finder", page_icon="⚽")
 
@@ -130,19 +130,20 @@ if st.session_state.videos:
         col_a, col_b = st.columns(2)
         with col_a:
             max_lookback = st.slider(
-                "Max seconds to look back for the pass",
+                "Max seconds to look back for the pass IN",
                 1.0, 10.0, 6.0, 0.5,
                 help="The clip starts exactly when the previous player's touch ended "
-                     "(i.e. the actual pass), not a fixed buffer. This caps how far "
+                     "(i.e. the actual pass in), not a fixed buffer. This caps how far "
                      "back it's allowed to search for that moment.",
             )
         with col_b:
-            pad_after = st.slider(
-                "Seconds to include AFTER",
-                0.0, 6.0, 2.0, 0.5,
-                help="Extra seconds tacked onto the end of the clip, past the last "
-                     "moment the player's name was detected. Raise this too if clips "
-                     "still feel like they're cutting off early.",
+            max_lookforward = st.slider(
+                "Max seconds to look forward for the pass OUT",
+                1.0, 10.0, 6.0, 0.5,
+                help="The clip now ends exactly when the NEXT player's touch begins "
+                     "(i.e. when this player actually released the ball), not a fixed "
+                     "buffer — so it won't cut off early while they still have it. This "
+                     "caps how far forward it's allowed to search for that moment.",
             )
 
         # Gather clip windows for this player across every uploaded video,
@@ -151,19 +152,19 @@ if st.session_state.videos:
         for v, segs in zip(st.session_state.videos, segments_per_video):
             if chosen_name not in segs:
                 continue
-            windows = build_clip_windows(segs, chosen_name, pad_after=pad_after, max_lookback=max_lookback)
+            windows = build_clip_windows(segs, chosen_name, max_lookback=max_lookback, max_lookforward=max_lookforward)
             for (s, e) in windows:
                 all_clips.append((v["path"], v["name"], s, e))
 
         st.write(f"**{chosen_name}** — {len(all_clips)} possession moments found across "
-                 f"{len(st.session_state.videos)} video(s). Each clip starts right at the pass in.")
+                 f"{len(st.session_state.videos)} video(s). Each clip runs from the pass in to the pass out.")
 
         if "clip_cache" not in st.session_state:
             st.session_state.clip_cache = {}
 
         selected_indices = []
         for i, (video_path, video_name, clip_start, clip_end) in enumerate(all_clips):
-            cache_key = f"{chosen_name}_{i}_{gap_tolerance}_{max_lookback}_{pad_after}"
+            cache_key = f"{chosen_name}_{i}_{gap_tolerance}_{max_lookback}_{max_lookforward}"
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(f"**Clip {i+1}** — from *{video_name}*, {clip_start:.1f}s to {clip_end:.1f}s")
