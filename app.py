@@ -6,7 +6,7 @@ import streamlit as st
 
 from processor import extract_frames, build_timeline, build_segments, build_clip_windows, cut_player_highlights, cut_single_clip, get_duration_seconds
 
-MAX_DURATION_SECONDS = 10 * 60  # 10 minute cap
+MAX_DURATION_SECONDS = 30 * 60  # 30 minute cap
 
 st.set_page_config(page_title="FC Mobile Player Clip Finder", page_icon="⚽")
 
@@ -38,8 +38,8 @@ if uploaded is not None and st.button("Process match"):
         if duration > MAX_DURATION_SECONDS:
             st.error(
                 f"This video is {duration/60:.1f} minutes long. The current limit is "
-                f"10 minutes. Please trim the video or lower its export quality to "
-                f"reduce length/size, then try again."
+                f"{MAX_DURATION_SECONDS/60:.0f} minutes. Please trim the video or lower its "
+                f"export quality to reduce length/size, then try again."
             )
             st.stop()
 
