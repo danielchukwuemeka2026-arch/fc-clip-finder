@@ -35,6 +35,32 @@ fps = st.slider(
     min_value=0.5, max_value=4.0, value=2.0, step=0.5,
 )
 
+# Live estimate so the fps tradeoff is an informed choice, not a guess —
+# updates automatically as you move the slider or add/remove files.
+SECONDS_PER_FRAME_ESTIMATE = 1.1  # benchmarked OCR cost per frame on this pipeline
+if uploaded_files:
+    with tempfile.TemporaryDirectory() as est_dir:
+        total_duration = 0.0
+        for uf in uploaded_files:
+            tmp_path = os.path.join(est_dir, uf.name)
+            with open(tmp_path, "wb") as f:
+                f.write(uf.getbuffer())
+            total_duration += get_duration_seconds(tmp_path)
+
+    total_frames = int(total_duration * fps)
+    est_seconds = total_frames * SECONDS_PER_FRAME_ESTIMATE
+    est_minutes = est_seconds / 60
+
+    if est_minutes < 5:
+        st.info(f"📊 Estimated processing time: ~{est_minutes:.1f} minutes ({total_frames} frames total)")
+    elif est_minutes < 15:
+        st.warning(f"📊 Estimated processing time: ~{est_minutes:.0f} minutes ({total_frames} frames total). "
+                   f"Should be fine, but don't close the tab while it runs.")
+    else:
+        st.error(f"⚠️ Estimated processing time: ~{est_minutes:.0f} minutes ({total_frames} frames total). "
+                 f"This is long enough that free-tier hosting may run out of memory or time out before "
+                 f"finishing. Consider lowering the fps slider, or splitting this into shorter videos.")
+
 if uploaded_files and st.button("Process video(s)"):
     st.session_state.videos = []  # reset for this batch
 
