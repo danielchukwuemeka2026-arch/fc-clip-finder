@@ -19,7 +19,6 @@ st.write(
 
 if "timeline" not in st.session_state:
     st.session_state.timeline = None
-    st.session_state.segments = None
     st.session_state.video_path = None
 
 uploaded = st.file_uploader("Upload your match video (mp4)", type=["mp4", "mov", "m4v"])
@@ -60,14 +59,20 @@ if uploaded is not None and st.button("Process match"):
             progress_bar.progress(min(done / total, 1.0), text=f"Reading on-screen player names... {done}/{total}")
 
         timeline = build_timeline(frames_dir, fps=fps, progress_cb=progress_cb)
-        segments = build_segments(timeline)
 
         st.session_state.timeline = timeline
-        st.session_state.segments = segments
         st.success("Done! Pick a player below.")
 
-if st.session_state.segments:
-    segments = st.session_state.segments
+if st.session_state.timeline:
+    gap_tolerance = st.slider(
+        "How many seconds of missed detection to tolerate as 'still the same possession'",
+        1.0, 8.0, 4.0, 0.5,
+        help="If the player's name briefly isn't detected for longer than this (blocked view, "
+             "OCR miss, etc.), the clip is cut there even if they still have the ball. "
+             "Raise this if clips are ending too early.",
+    )
+    segments = build_segments(st.session_state.timeline, gap_seconds=gap_tolerance)
+
     # Rank players by total on-screen possession time, filter tiny noise
     ranked = sorted(
         segments.items(),
@@ -94,7 +99,10 @@ if st.session_state.segments:
         with col_b:
             pad_after = st.slider(
                 "Seconds to include AFTER",
-                0.0, 6.0, 1.5, 0.5,
+                0.0, 6.0, 2.0, 0.5,
+                help="Extra seconds tacked onto the end of the clip, past the last "
+                     "moment the player's name was detected. Raise this too if clips "
+                     "still feel like they're cutting off early.",
             )
 
         clip_windows = build_clip_windows(
@@ -111,7 +119,7 @@ if st.session_state.segments:
 
         selected_indices = []
         for i, (clip_start, clip_end) in enumerate(clip_windows):
-            cache_key = f"{chosen_name}_{i}_{max_lookback}_{pad_after}"
+            cache_key = f"{chosen_name}_{i}_{gap_tolerance}_{max_lookback}_{pad_after}"
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.write(f"**Clip {i+1}** — {clip_start:.1f}s to {clip_end:.1f}s")
