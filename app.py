@@ -4,7 +4,7 @@ import shutil
 
 import streamlit as st
 
-from processor import extract_frames, build_timeline, build_segments, cut_player_highlights, get_duration_seconds
+from processor import extract_frames, build_timeline, build_segments, build_clip_windows, cut_player_highlights, cut_single_clip, get_duration_seconds
 
 MAX_DURATION_SECONDS = 10 * 60  # 10 minute cap
 
@@ -82,19 +82,71 @@ if st.session_state.segments:
         choice_idx = st.selectbox("Choose a player", range(len(names)), format_func=lambda i: names[i])
         chosen_name, chosen_segs = ranked[choice_idx]
 
-        st.write(f"**{chosen_name}** — {len(chosen_segs)} possession moments found:")
-        for s, e in chosen_segs:
-            st.write(f"- {s:.1f}s to {e:.1f}s")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            max_lookback = st.slider(
+                "Max seconds to look back for the pass",
+                1.0, 10.0, 6.0, 0.5,
+                help="The clip starts exactly when the previous player's touch ended "
+                     "(i.e. the actual pass), not a fixed buffer. This caps how far "
+                     "back it's allowed to search for that moment.",
+            )
+        with col_b:
+            pad_after = st.slider(
+                "Seconds to include AFTER",
+                0.0, 6.0, 1.5, 0.5,
+            )
 
-        padding = st.slider("Padding around each clip (seconds)", 0.0, 4.0, 1.5, 0.5)
+        clip_windows = build_clip_windows(
+            segments, chosen_name, pad_after=pad_after, max_lookback=max_lookback,
+        )
 
-        if st.button("Generate highlight reel"):
-            out_path = os.path.join(tempfile.gettempdir(), f"{chosen_name}_highlights.mp4")
-            with st.spinner("Cutting clips..."):
-                cut_player_highlights(st.session_state.video_path, chosen_segs, out_path, padding=padding)
-            st.video(out_path)
-            with open(out_path, "rb") as f:
-                st.download_button("Download highlight reel", f, file_name=f"{chosen_name}_highlights.mp4")
+        st.write(f"**{chosen_name}** — {len(clip_windows)} possession moments found. "
+                 f"Each clip starts right at the pass in — preview them and pick your favorites.")
+
+        # Cache cut clips per (player, segment index, settings) so we don't
+        # re-cut on every Streamlit rerun (e.g. when a checkbox is toggled).
+        if "clip_cache" not in st.session_state:
+            st.session_state.clip_cache = {}
+
+        selected_indices = []
+        for i, (clip_start, clip_end) in enumerate(clip_windows):
+            cache_key = f"{chosen_name}_{i}_{max_lookback}_{pad_after}"
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**Clip {i+1}** — {clip_start:.1f}s to {clip_end:.1f}s")
+                if st.button(f"Cut & preview clip {i+1}", key=f"cutbtn_{cache_key}"):
+                    clip_path = os.path.join(tempfile.gettempdir(), f"{cache_key}.mp4")
+                    with st.spinner("Cutting..."):
+                        cut_single_clip(st.session_state.video_path, clip_start, clip_end, clip_path)
+                    st.session_state.clip_cache[cache_key] = clip_path
+
+                if cache_key in st.session_state.clip_cache:
+                    clip_path = st.session_state.clip_cache[cache_key]
+                    st.video(clip_path)
+                    with open(clip_path, "rb") as f:
+                        st.download_button(
+                            f"Download clip {i+1}", f,
+                            file_name=f"{chosen_name}_clip{i+1}.mp4",
+                            key=f"dl_{cache_key}",
+                        )
+            with col2:
+                if cache_key in st.session_state.clip_cache:
+                    include = st.checkbox("Include in combined reel", key=f"chk_{cache_key}")
+                    if include:
+                        selected_indices.append(i)
+            st.divider()
+
+        if selected_indices:
+            st.write(f"**{len(selected_indices)} clip(s) selected** for a combined reel.")
+            if st.button("Download combined reel of selected clips"):
+                selected_windows = [clip_windows[i] for i in selected_indices]
+                out_path = os.path.join(tempfile.gettempdir(), f"{chosen_name}_selected_highlights.mp4")
+                with st.spinner("Combining selected clips..."):
+                    cut_player_highlights(st.session_state.video_path, selected_windows, out_path)
+                st.video(out_path)
+                with open(out_path, "rb") as f:
+                    st.download_button("Download combined reel", f, file_name=f"{chosen_name}_selected_highlights.mp4")
 
 st.divider()
 st.caption(
